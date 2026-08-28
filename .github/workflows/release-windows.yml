@@ -1,0 +1,65 @@
+name: Build/release
+
+on: workflow_dispatch
+
+jobs:
+  release:
+    runs-on: windows-2022   # 仅 Windows
+
+    env:
+      SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_TOKEN }}
+
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v6
+
+      - name: Install Node.js, NPM and Yarn
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: yarn install
+
+      - name: TypeScript type check
+        run: npx tsc --noEmit --noUnusedLocals false --noUnusedParameters false
+
+      # Windows 不需要 Snapcraft、Gcc、FPM、macOS 证书等，故删除所有相关步骤
+
+      - name: Set environment variable USE_HARD_LINKS
+        run: echo "USE_HARD_LINKS=false" >> $GITHUB_ENV
+
+      - name: Modify package.json for dev branch
+        if: github.ref == 'refs/heads/dev'
+        shell: bash
+        run: |
+          # Windows 下用 powershell 替换 productName
+          powershell -Command "(Get-Content package.json) -replace '\"productName\": \"Koodo Reader\"', '\"productName\": \"Koodo Reader DEV\"' | Set-Content package.json"
+
+      # （原 Linux arm64 修改已删除，因为不适用）
+
+      - name: Build/release Electron app
+        uses: samuelmeuli/action-electron-builder@v1.6.0
+        with:
+          build_script_name: "build"
+          github_token: ${{ secrets.github_token }}
+          mac_certs: ${{ secrets.MAC_CERTS }}          # Windows 不需要，但保留不影响
+          mac_certs_password: ${{ secrets.MAC_CERTS_PASSWORD }}
+          upload_artifacts: false                      # 禁用内置上传，改用下面的显式上传
+          release: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        env:
+          API_KEY_ID: ${{ secrets.API_KEY_ID }}        # Windows 不需要，保留也无妨
+          API_KEY_ISSUER_ID: ${{ secrets.API_KEY_ISSUER_ID }}
+
+      # 显式上传 Windows 构建产物
+      - name: Upload artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Koodo-Reader-Windows
+          path: |
+            **/*.exe
+            **/*.nupkg          # 如有
+            **/*.msi            # 如有
+            **/*.zip            # 可能生成 portable zip
+          if-no-files-found: warn
